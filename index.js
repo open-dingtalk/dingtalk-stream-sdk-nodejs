@@ -4,12 +4,6 @@ const { makeHttpRequest } = require("@midwayjs/core");
 const WebSocket = require("ws");
 const ROBOT_TOPIC = "/v1.0/im/bot/messages/get";
 
-/**
- * Dingtalk Websocket长链接消息类型，包括事件推送、外联回调、系统消息
- * @type {string[]}
- */
-const DWMessageTypes = ["SYSTEM", "EVENT", "CALLBACK"];
-
 let config = {
   clientId: "",
   clientSecret: "",
@@ -121,6 +115,14 @@ const DWClient = function (clientId, clientSecret, ua) {
               my.publish("SYSTEM", "disconnect", msg);
             } else if (msg.headers.topic === "KEEPALIVE") {
               my.heartbeat();
+            } else if (msg.headers.topic === "ping") {
+                let data = {
+                    code : 200,
+                    headers: msg.headers,
+                    message : "OK",
+                    data : msg.data 
+                  }
+                my.socket.send(JSON.stringify(data));
             }
             break;
           case "EVENT":
@@ -128,12 +130,8 @@ const DWClient = function (clientId, clientSecret, ua) {
             break;
           case "CALLBACK":
             // 处理机器人回调消息
-            if (msg.headers.topic === "bot_got_msg") {
-              let robotMsg = {};
-              if (typeof msg.data === "string") {
-                robotMsg = JSON.parse(msg.data);
-              }
-              my.publish("CALLBACK", msg.headers.topic, robotMsg);
+            if (msg.headers.topic === ROBOT_TOPIC) {
+              my.publish("CALLBACK", msg.headers.topic, msg);
             }
             break;
         }
@@ -257,29 +255,34 @@ const DWClient = function (clientId, clientSecret, ua) {
         }
       );
       if (result.status === 200 && result.data.access_token) {
-        const res = await makeHttpRequest(
-          `https://pre-api.dingtalk.com/v1.0/gateway/connections/open`,
-          {
-            method: "POST",
-            dataType: "json",
-            contentType: "json",
-            data: my.config,
-            headers: {
-              "access-token": result.data.access_token, // 'd136e657-5998-4cc4-a055-2b7ceab0f212'
-            },
+        my.config.access_token = result.data.access_token;
+        try {
+          const res = await makeHttpRequest(
+            `https://api.dingtalk.com/v1.0/gateway/connections/open`,
+            {
+              method: "POST",
+              dataType: "json",
+              contentType: "json",
+              data: my.config,
+              headers: {
+                "access-token": result.data.access_token, // 'd136e657-5998-4cc4-a055-2b7ceab0f212'
+              },
+            }
+          );
+          if (res.data) {
+            my.config.endpoint = res.data;
+            const { endpoint, ticket } = res.data;
+            if (!endpoint || !ticket) {
+              printDebug(my, "endpoint or ticket is null");
+              throw new Error("endpoint or ticket is null");
+            }
+            my.dw_url = `${endpoint}?ticket=${ticket}`;
+            return my;
+          } else {
+            throw new Error("build: get endpoint failed");
           }
-        );
-        if (res.data) {
-          my.config.endpoint = res.data;
-          const { endpoint, ticket } = res.data;
-          if (!endpoint || !ticket) {
-            printDebug(my, "endpoint or ticket is null");
-            throw new Error("endpoint or ticket is null");
-          }
-          my.dw_url = `${endpoint}?ticket=${ticket}`;
-          return my;
-        } else {
-          throw new Error("build: get endpoint failed");
+        } catch (err) {
+          throw err;
         }
       } else {
         throw new Error("build: get access_token failed");
@@ -317,6 +320,24 @@ const DWClient = function (clientId, clientSecret, ua) {
   this.publish = function (type, topic, value) {
     publish(my, type, topic, value);
   };
+
+  this.send = function (messageId, value) {
+    if (!messageId) {
+      console.error("send: messageId must be defined");
+      throw new Error("send: messageId must be defined");
+    }
+
+    let msg = {
+      code: 200,
+      headers: {
+        contentType: "application/json",
+        messageId: messageId,
+      },
+      message : "OK",
+      data: JSON.stringify(value),
+    };
+    my.socket.send(JSON.stringify(msg));
+  }
 };
 
 module.exports = DWClient;

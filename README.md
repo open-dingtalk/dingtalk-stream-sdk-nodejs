@@ -31,11 +31,13 @@ Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is e
 点击“点击调试”按钮，可以创建测试群进行测试。
 
 3、使用demo项目测试，启动服务：
+
 a、获取demo项目 
 ```Shell
  git clone git@github.com:open-dingtalk/dingtalk-stream-sdk-nodejs.git
 ```
 b、在example/config.json里配置应用信息。
+
 c、启动测试case
 ```Shell
 cd dingtalk-stream-sdk-nodejs

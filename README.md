@@ -48,7 +48,16 @@ npm start
 ```Shell
 npm i dingtalk-stream-sdk-nodejs
 ```
-
+```javascript
+const client = new DWClient(config.appKey, config.appSecret);
+client.registerRobotCallbackFunction(async (res) => {
+    // 注册机器人回调事件
+    console.log("收到消息");
+    const {messageId} = res.headers;
+    const { text, senderStaffId, sessionWebhook } = JSON.parse(res.data);
+  })
+  .connect();
+```
 
 ### 事件订阅切换到 Stream 模式（可选）
 

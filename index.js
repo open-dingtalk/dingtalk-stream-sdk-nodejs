@@ -1,6 +1,6 @@
 "use strict";
 
-const { makeHttpRequest } = require("@midwayjs/core");
+const { makeHttpRequest } = require("./httpclient");
 const WebSocket = require("ws");
 const ROBOT_TOPIC = "/v1.0/im/bot/messages/get";
 
@@ -258,7 +258,7 @@ const DWClient = function (clientId, clientSecret, ua) {
         my.config.access_token = result.data.access_token;
         try {
           const res = await makeHttpRequest(
-            `https://api.dingtalk.com/v1.0/gateway/connections/open`,
+            `https://pre-api.dingtalk.com/v1.0/gateway/connections/open`,
             {
               method: "POST",
               dataType: "json",

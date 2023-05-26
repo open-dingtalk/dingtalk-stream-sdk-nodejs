@@ -1,6 +1,6 @@
 {
   "name": "dingtalk-stream-sdk-nodejs",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is easier to access the DingTalk",
   "main": "index.js",
   "scripts": {
@@ -23,7 +23,6 @@
   },
   "homepage": "https://github.com/open-dingtalk/dingtalk-stream-sdk-nodejs#readme",
   "dependencies": {
-    "@midwayjs/core": "3.7.0",
     "ws": "^8.13.0"
   }
 }

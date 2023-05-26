@@ -50,7 +50,12 @@ npm start
 ```Shell
 npm i dingtalk-stream-sdk-nodejs
 ```
+
+代码中使用
 ```javascript
+const DWClient = require("../index");
+const config = require("./config.json");
+
 const client = new DWClient(config.appKey, config.appSecret);
 client.registerRobotCallbackFunction(async (res) => {
     // 注册机器人回调事件

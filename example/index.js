@@ -1,4 +1,4 @@
-const { makeHttpRequest } = require("@midwayjs/core");
+const { makeHttpRequest } = require("../httpclient");
 const DWClient = require("../index");
 const config = require("./config.json");
 

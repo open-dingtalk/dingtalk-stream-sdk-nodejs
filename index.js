@@ -258,7 +258,7 @@ const DWClient = function (clientId, clientSecret, ua) {
         my.config.access_token = result.data.access_token;
         try {
           const res = await makeHttpRequest(
-            `https://pre-api.dingtalk.com/v1.0/gateway/connections/open`,
+            `https://api.dingtalk.com/v1.0/gateway/connections/open`,
             {
               method: "POST",
               dataType: "json",

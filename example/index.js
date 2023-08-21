@@ -3,8 +3,8 @@ import axios from 'axios';
 import config from './config.json' assert { type: 'json' };
 
 const client = new DWClient({
-  clientId: config.appKey,
-  clientSecret: config.appSecret,
+  clientId: config.clientId,
+  clientSecret: config.clientSecret,
 });
 client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     // 注册机器人回调事件

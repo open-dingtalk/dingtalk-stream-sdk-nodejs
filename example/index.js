@@ -1,9 +1,12 @@
-const { makeHttpRequest } = require("../httpclient");
-const DWClient = require("../index");
-const config = require("./config.json");
+import { DWClient, TOPIC_ROBOT } from '../dist/index.mjs';
+import axios from 'axios';
+import config from './config.json' assert { type: 'json' };
 
-const client = new DWClient(config.appKey, config.appSecret);
-client.registerRobotCallbackFunction(async (res) => {
+const client = new DWClient({
+  clientId: config.clientId,
+  clientSecret: config.clientSecret,
+});
+client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     // 注册机器人回调事件
     console.log("收到消息");
     // const {messageId} = res.headers;
@@ -19,21 +22,17 @@ client.registerRobotCallbackFunction(async (res) => {
       msgtype: 'text',
     };
 
-    try {
-      const result = await makeHttpRequest(sessionWebhook, {
-        method: 'POST',
-        dataType: 'json',
-        contentType: 'json',
-        data: body,
-        headers: {
-          'x-acs-dingtalk-access-token': client.getConfig().access_token,
-        },
-      });
-      return result.data;
-    } catch (error) {
-      this.logger.error(error);
-      throw error
-    }
+    const result = await axios({
+      url: sessionWebhook,
+      method: 'POST',
+      responseType: 'json',
+      data: body,
+      headers: {
+        'x-acs-dingtalk-access-token': client.getConfig().access_token,
+      },
+    });
+
+    return result.data;
 
     //client.send(messageId, body);
     return { success: true, code: 200, message: "OK", data: body };

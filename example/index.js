@@ -34,7 +34,7 @@ client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
 
     return result.data;
 
-    //client.send(messageId, body);
-    return { success: true, code: 200, message: "OK", data: body };
+    // client.send(messageId, body);
+    // return { success: true, code: 200, message: "OK", data: body };
   })
   .connect();

@@ -7,6 +7,7 @@ Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is e
 ### 准备工作
 
 * Nodejs 开发环境，https://midwayjs.org/docs/how_to_install_nodejs
+* 需要Node version >= 18.17.1
 * 钉钉开发者账号，具备创建企业内部应用的权限，详见[成为钉钉开发者](https://open.dingtalk.com/document/orgapp/become-a-dingtalk-developer)
 
 ### 快速开始指南
@@ -41,7 +42,8 @@ b、在example/config.json里配置应用信息。
 c、启动测试case
 ```Shell
 cd dingtalk-stream-sdk-nodejs
-tnpm i
+yarn
+npm run build
 npm start
 ```
 
@@ -56,8 +58,11 @@ npm i dingtalk-stream-sdk-nodejs
 const DWClient = require("../index");
 const config = require("./config.json");
 
-const client = new DWClient(config.appKey, config.appSecret);
-client.registerRobotCallbackFunction(async (res) => {
+const client = new DWClient({
+  clientId: config.clientId,
+  clientSecret: config.clientSecret,
+});
+client.registerRobotCallbackFunction('/v1.0/im/bot/messages/get', async (res) => {
     // 注册机器人回调事件
     console.log("收到消息");
     const {messageId} = res.headers;

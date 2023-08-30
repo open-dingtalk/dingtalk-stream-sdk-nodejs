@@ -1,4 +1,4 @@
-import { DWClient, TOPIC_ROBOT } from '../dist/index.mjs';
+import { DWClient, RobotMessage, TOPIC_ROBOT } from '../src/index.js';
 import axios from 'axios';
 import config from './config.json' assert { type: 'json' };
 
@@ -10,7 +10,7 @@ client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     // 注册机器人回调事件
     console.log("收到消息");
     // const {messageId} = res.headers;
-    const { text, senderStaffId, sessionWebhook } = JSON.parse(res.data);
+    const { text, senderStaffId, sessionWebhook } = JSON.parse(res.data) as RobotMessage;
     const body = {
       at: {
         atUserIds: [senderStaffId],
@@ -33,8 +33,5 @@ client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     });
 
     return result.data;
-
-    // client.send(messageId, body);
-    // return { success: true, code: 200, message: "OK", data: body };
   })
   .connect();

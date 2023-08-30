@@ -62,7 +62,7 @@ const client = new DWClient({
   clientId: config.clientId,
   clientSecret: config.clientSecret,
 });
-client.registerRobotCallbackFunction('/v1.0/im/bot/messages/get', async (res) => {
+client.registerCallbackListener('/v1.0/im/bot/messages/get', async (res) => {
     // 注册机器人回调事件
     console.log("收到消息");
     const {messageId} = res.headers;

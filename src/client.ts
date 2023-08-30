@@ -1,7 +1,6 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { TOPIC_ROBOT } from './constants';
 
 const defaultConfig = {
   autoReconnect: true,
@@ -30,7 +29,7 @@ export interface DWClientConfig {
 }
 
 export interface DWClientDownStream {
-  pecVersion: string;
+  specVersion: string;
   type: string;
   headers: {
     appId: string;
@@ -116,6 +115,7 @@ export class DWClient extends EventEmitter {
 
     return this;
   }
+
   async getEndpoint() {
     this.printDebug('get connect endpoint by config');
     console.log(this.config);
@@ -187,7 +187,6 @@ export class DWClient extends EventEmitter {
             this.socket?.ping('', true);
           }, this.heartbeat_interval);
         }
-        // my.publish('SYSTEM', 'CONNECTED', 'true');
       });
 
       // wait for ping-pong with server
@@ -197,47 +196,7 @@ export class DWClient extends EventEmitter {
 
       // on receiving messages from dingtalk websocket server
       this.socket.on('message', (data: string) => {
-        this.printDebug('Received message from dingtalk websocket server');
-        this.printDebug(data);
-        console.log(data);
-        // {"specVersion":"1.0","type":"SYSTEM","headers":{"contentType":"application/json","messageId":"c0a800e9168327945646012d43","time":"1683279456460","topic":"disconnect"},"data":"{\"reason\":\"persistent connection is timeout\"}"}
-        // {"specVersion":"1.0","type":"CALLBACK","headers":{"appId":"9256b875-17e5-46a8-890a-bf4246dc5349","connectionId":"c3faec14-ebe9-11ed-8943-0ec429f1b9a1","contentType":"application/json","messageId":"213f1d00_853_187b7df781f_225d","time":"1683362492940","topic":"bot_got_msg"},"data":"{\"conversationId\":\"cidFbEwwavwcAsXDZbYqSBLnA==\",\"atUsers\":[{\"dingtalkId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\"}],\"chatbotCorpId\":\"ding9f50b15bccd16741\",\"chatbotUserId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\",\"msgId\":\"msgqEufncv9gVqy7ia60LYs3w==\",\"senderNick\":\"骏隆（主用钉）\",\"isAdmin\":true,\"senderStaffId\":\"01426861-1254332033\",\"sessionWebhookExpiredTime\":1683363692884,\"createAt\":1683362491872,\"senderCorpId\":\"ding9f50b15bccd16741\",\"conversationType\":\"2\",\"senderId\":\"$:LWCP_v1:$+PxJZVhRkpC139mPH6L7aw==\",\"conversationTitle\":\"机器人长链接事件测试群\",\"isInAtList\":true,\"sessionWebhook\":\"https://oapi.dingtalk.com/robot/sendBySession?session=2664f1467475bd90fcba36234c735997\",\"text\":{\"content\":\" ss\"},\"robotCode\":\"dingphtembyvlbeq2y4d\",\"msgtype\":\"text\"}"}
-        const msg = JSON.parse(data);
-        switch (msg.type) {
-          case 'SYSTEM':
-            if (msg.headers.topic === 'CONNECTED') {
-              // this.register();
-            } else if (msg.headers.topic === 'REGISTERED') {
-              this.registered = true;
-              this.reconnecting = false;
-              // this.publish('SYSTEM', 'REGISTERED', 'true');
-            } else if (msg.headers.topic === 'disconnect') {
-              this.connected = false;
-              this.registered = false;
-              // this.publish('SYSTEM', 'disconnect', msg);
-            } else if (msg.headers.topic === 'KEEPALIVE') {
-              this.heartbeat();
-            } else if (msg.headers.topic === 'ping') {
-              this.socket?.send(
-                JSON.stringify({
-                  code: 200,
-                  headers: msg.headers,
-                  message: 'OK',
-                  data: msg.data,
-                })
-              );
-            }
-            break;
-          case 'EVENT':
-            this.publish('EVENT', msg.headers.topic, msg.data);
-            break;
-          case 'CALLBACK':
-            // 处理机器人回调消息
-            if (msg.headers.topic === TOPIC_ROBOT) {
-              this.publish('CALLBACK', msg.headers.topic, msg);
-            }
-            break;
-        }
+        this.onDownStream(data);
       });
 
       this.socket.on('close', (err) => {
@@ -284,17 +243,69 @@ export class DWClient extends EventEmitter {
     this.printDebug('CLIENT-SIDE HEARTBEAT');
   }
 
-  publish(type: string, topic: string, value: DWClientDownStream) {
-    switch (type) {
+  onDownStream(data: string) {
+    this.printDebug('Received message from dingtalk websocket server');
+    this.printDebug(data);
+    console.log(data);
+    // {"specVersion":"1.0","type":"SYSTEM","headers":{"contentType":"application/json","messageId":"c0a800e9168327945646012d43","time":"1683279456460","topic":"disconnect"},"data":"{\"reason\":\"persistent connection is timeout\"}"}
+    // {"specVersion":"1.0","type":"CALLBACK","headers":{"appId":"9256b875-17e5-46a8-890a-bf4246dc5349","connectionId":"c3faec14-ebe9-11ed-8943-0ec429f1b9a1","contentType":"application/json","messageId":"213f1d00_853_187b7df781f_225d","time":"1683362492940","topic":"bot_got_msg"},"data":"{\"conversationId\":\"cidFbEwwavwcAsXDZbYqSBLnA==\",\"atUsers\":[{\"dingtalkId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\"}],\"chatbotCorpId\":\"ding9f50b15bccd16741\",\"chatbotUserId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\",\"msgId\":\"msgqEufncv9gVqy7ia60LYs3w==\",\"senderNick\":\"骏隆（主用钉）\",\"isAdmin\":true,\"senderStaffId\":\"01426861-1254332033\",\"sessionWebhookExpiredTime\":1683363692884,\"createAt\":1683362491872,\"senderCorpId\":\"ding9f50b15bccd16741\",\"conversationType\":\"2\",\"senderId\":\"$:LWCP_v1:$+PxJZVhRkpC139mPH6L7aw==\",\"conversationTitle\":\"机器人长链接事件测试群\",\"isInAtList\":true,\"sessionWebhook\":\"https://oapi.dingtalk.com/robot/sendBySession?session=2664f1467475bd90fcba36234c735997\",\"text\":{\"content\":\" ss\"},\"robotCode\":\"dingphtembyvlbeq2y4d\",\"msgtype\":\"text\"}"}
+    const msg = JSON.parse(data) as DWClientDownStream;
+    switch (msg.type) {
       case 'SYSTEM':
+        this.onSystem(msg);
         break;
       case 'EVENT':
+        this.onEvent(msg);
         break;
       case 'CALLBACK':
-        console.log('CALLBACK', topic, value);
-        this.emit(topic, value);
+        // 处理机器人回调消息
+        this.onCallback(msg);
         break;
     }
+  }
+
+  onSystem(downstream: DWClientDownStream) {
+    switch (downstream.headers.topic) {
+      case 'CONNECTED': {
+        this.printDebug('CONNECTED');
+        break;
+      }
+      case 'REGISTERED': {
+        // this.printDebug('REGISTERED');
+        this.registered = true;
+        this.reconnecting = false;
+        break;
+      }
+      case 'disconnect': {
+        this.connected = false;
+        this.registered = false;
+        break;
+      }
+      case 'KEEPALIVE': {
+        this.heartbeat();
+        break;
+      }
+      case 'ping': {
+        this.printDebug('PING');
+        this.socket?.send(
+          JSON.stringify({
+            code: 200,
+            headers: downstream.headers,
+            message: 'OK',
+            data: downstream.data,
+          })
+        );
+        break;
+      }
+    }
+  }
+
+  onEvent(message: DWClientDownStream) {
+    // todo
+  }
+
+  onCallback(message: DWClientDownStream) {
+    this.emit(message.headers.topic, message);
   }
 
   send(messageId: string, value: any) {

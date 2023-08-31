@@ -55,7 +55,7 @@ npm i dingtalk-stream-sdk-nodejs
 
 代码中使用
 ```javascript
-const DWClient = require("../index");
+const DWClient = require("dingtalk-stream-sdk-nodejs");
 const config = require("./config.json");
 
 const client = new DWClient({

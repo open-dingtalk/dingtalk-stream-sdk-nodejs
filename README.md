@@ -61,6 +61,7 @@ const config = require("./config.json");
 const client = new DWClient({
   clientId: config.clientId,
   clientSecret: config.clientSecret,
+  debug: true // 开启调试信息，默认关闭
 });
 client.registerCallbackListener('/v1.0/im/bot/messages/get', async (res) => {
     // 注册机器人回调事件

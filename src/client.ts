@@ -18,6 +18,7 @@ export interface DWClientConfig {
   clientId: string;
   clientSecret: string;
   keepAlive?: boolean;
+  debug?: boolean;
   ua?: string;
   endpoint?: string;
   access_token?: string;
@@ -43,7 +44,7 @@ export interface DWClientDownStream {
 }
 
 export class DWClient extends EventEmitter {
-  debug = true;
+  debug = false;
   connected = false;
   registered = false;
   reconnecting = false;
@@ -63,6 +64,7 @@ export class DWClient extends EventEmitter {
     clientSecret: string;
     ua?: string;
     keepAlive?: boolean;
+    debug?: boolean;
   }) {
     super();
     this.config = {
@@ -74,13 +76,16 @@ export class DWClient extends EventEmitter {
       console.error('clientId or clientSecret is null');
       throw new Error('clientId or clientSecret is null');
     }
+    if (this.config.debug !== undefined) {
+      this.debug = this.config.debug;
+    }
   }
 
   getConfig() {
     return { ...this.config };
   }
 
-  printDebug(msg: string) {
+  printDebug(msg: object | string) {
     if (this.debug) {
       const date = '[' + new Date().toISOString() + ']';
       console.info(date, msg);
@@ -118,7 +123,7 @@ export class DWClient extends EventEmitter {
 
   async getEndpoint() {
     this.printDebug('get connect endpoint by config');
-    console.log(this.config);
+    this.printDebug(this.config);
     const result = await axios.get(
       `https://oapi.dingtalk.com/gettoken?appkey=${this.config.clientId}&appsecret=${this.config.clientSecret}`
     );
@@ -141,7 +146,7 @@ export class DWClient extends EventEmitter {
         },
       });
 
-      console.log('res.data', JSON.stringify(res.data));
+      this.printDebug('res.data ' + JSON.stringify(res.data));
       if (res.data) {
         this.config.endpoint = res.data;
         const { endpoint, ticket } = res.data;
@@ -246,7 +251,6 @@ export class DWClient extends EventEmitter {
   onDownStream(data: string) {
     this.printDebug('Received message from dingtalk websocket server');
     this.printDebug(data);
-    console.log(data);
     // {"specVersion":"1.0","type":"SYSTEM","headers":{"contentType":"application/json","messageId":"c0a800e9168327945646012d43","time":"1683279456460","topic":"disconnect"},"data":"{\"reason\":\"persistent connection is timeout\"}"}
     // {"specVersion":"1.0","type":"CALLBACK","headers":{"appId":"9256b875-17e5-46a8-890a-bf4246dc5349","connectionId":"c3faec14-ebe9-11ed-8943-0ec429f1b9a1","contentType":"application/json","messageId":"213f1d00_853_187b7df781f_225d","time":"1683362492940","topic":"bot_got_msg"},"data":"{\"conversationId\":\"cidFbEwwavwcAsXDZbYqSBLnA==\",\"atUsers\":[{\"dingtalkId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\"}],\"chatbotCorpId\":\"ding9f50b15bccd16741\",\"chatbotUserId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\",\"msgId\":\"msgqEufncv9gVqy7ia60LYs3w==\",\"senderNick\":\"骏隆（主用钉）\",\"isAdmin\":true,\"senderStaffId\":\"01426861-1254332033\",\"sessionWebhookExpiredTime\":1683363692884,\"createAt\":1683362491872,\"senderCorpId\":\"ding9f50b15bccd16741\",\"conversationType\":\"2\",\"senderId\":\"$:LWCP_v1:$+PxJZVhRkpC139mPH6L7aw==\",\"conversationTitle\":\"机器人长链接事件测试群\",\"isInAtList\":true,\"sessionWebhook\":\"https://oapi.dingtalk.com/robot/sendBySession?session=2664f1467475bd90fcba36234c735997\",\"text\":{\"content\":\" ss\"},\"robotCode\":\"dingphtembyvlbeq2y4d\",\"msgtype\":\"text\"}"}
     const msg = JSON.parse(data) as DWClientDownStream;

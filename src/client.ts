@@ -51,6 +51,7 @@ export interface DWClientDownStream {
     eventType?: string;
     eventBornTime?: string;
     eventId?: string;
+    eventCorpId?: string;
     eventUnifiedAppId?: string;
   };
   data: string;

@@ -48,6 +48,10 @@ export interface DWClientDownStream {
     messageId: string;
     time: string;
     topic: string;
+    eventType?: string;
+    eventBornTime?: string;
+    eventId?: string;
+    eventUnifiedAppId?: string;
   };
   data: string;
 }

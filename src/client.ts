@@ -2,6 +2,16 @@ import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
 
+export enum EventAck {
+  SUCCESS = "SUCCESS",
+  LATER = "LATER",
+}
+
+export interface EventAckData {
+  status: EventAck;
+  message?: string;
+}
+
 const defaultConfig = {
   autoReconnect: true,
   keepAlive: false,
@@ -42,6 +52,10 @@ export interface DWClientDownStream {
   data: string;
 }
 
+export interface OnEventReceived {
+  (msg: DWClientDownStream): EventAckData
+}
+
 export class DWClient extends EventEmitter {
   debug = true;
   connected = false;
@@ -57,6 +71,7 @@ export class DWClient extends EventEmitter {
   private socket?: WebSocket;
   private dw_url?: string;
   private isAlive = false;
+  private onEventReceived: OnEventReceived = (msg: DWClientDownStream) => {return {status: EventAck.SUCCESS}};
 
   constructor(opts: {
     clientId: string;
@@ -85,6 +100,13 @@ export class DWClient extends EventEmitter {
       const date = '[' + new Date().toISOString() + ']';
       console.info(date, msg);
     }
+  }
+
+  registerAllEventListener(
+      onEventReceived: (v: DWClientDownStream) => EventAckData
+  ) {
+    this.onEventReceived = onEventReceived;
+    return this;
   }
 
   registerCallbackListener(
@@ -301,7 +323,17 @@ export class DWClient extends EventEmitter {
   }
 
   onEvent(message: DWClientDownStream) {
-    // todo
+    this.printDebug("received event, message=" + JSON.stringify(message))
+    const ackData = this.onEventReceived(message)
+    this.socket?.send(JSON.stringify({
+      code: 200,
+      headers: {
+        contentType: "application/json",
+        messageId: message.headers.messageId,
+      },
+      message: 'OK',
+      data: JSON.stringify(ackData)
+    }));
   }
 
   onCallback(message: DWClientDownStream) {

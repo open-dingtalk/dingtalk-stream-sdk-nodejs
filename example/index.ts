@@ -1,6 +1,6 @@
-import { DWClient, RobotMessage, TOPIC_ROBOT } from '../src/index.js';
+import {DWClient, DWClientDownStream, EventAck, RobotMessage, TOPIC_ROBOT} from '../src/index.js';
 import axios from 'axios';
-import config from './config.json' assert { type: 'json' };
+import config from './config.json' assert {type: 'json'};
 
 const client = new DWClient({
   clientId: config.clientId,
@@ -33,5 +33,8 @@ client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     });
 
     return result.data;
+  })
+  .registerAllEventListener((message: DWClientDownStream) => {
+      return {status: EventAck.SUCCESS}
   })
   .connect();

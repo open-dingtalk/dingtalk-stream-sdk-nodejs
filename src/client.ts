@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
+import { GraphAPIResponse } from './constants';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -157,7 +158,7 @@ export class DWClient extends EventEmitter {
     if (result.status === 200 && result.data.access_token) {
       this.config.access_token = result.data.access_token;
       const res = await axios({
-        url: 'https://api.dingtalk.com/v1.0/gateway/connections/open',
+        url: 'https://pre-api.dingtalk.com/v1.0/gateway/connections/open',
         method: 'POST',
         responseType: 'json',
         data: {
@@ -289,7 +290,7 @@ export class DWClient extends EventEmitter {
         this.onEvent(msg);
         break;
       case 'CALLBACK':
-        // 处理机器人回调消息
+        // 处理回调消息
         this.onCallback(msg);
         break;
     }
@@ -350,6 +351,24 @@ export class DWClient extends EventEmitter {
   }
 
   send(messageId: string, value: any) {
+    if (!messageId) {
+      console.error('send: messageId must be defined');
+      throw new Error('send: messageId must be defined');
+    }
+
+    const msg = {
+      code: 200,
+      headers: {
+        contentType: 'application/json',
+        messageId: messageId,
+      },
+      message: 'OK',
+      data: JSON.stringify(value),
+    };
+    this.socket?.send(JSON.stringify(msg));
+  }
+
+  sendGraphAPIResponse(messageId: string, value: GraphAPIResponse) {
     if (!messageId) {
       console.error('send: messageId must be defined');
       throw new Error('send: messageId must be defined');

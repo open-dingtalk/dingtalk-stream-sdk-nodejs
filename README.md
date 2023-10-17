@@ -1,8 +1,10 @@
-# dingtalk-stream-sdk-nodejs
+# dingtalk-stream
 Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is easier to access the DingTalk chatbot
 钉钉支持 Stream 模式接入事件推送、机器人收消息以及卡片回调，该 SDK 实现了 Stream 模式。相比 Webhook 模式，Stream 模式可以更简单的接入各类事件和回调。
 
 ## 快速开始
+npm ii
+npm start
 
 ### 准备工作
 
@@ -41,21 +43,21 @@ b、在example/config.json里配置应用信息。
 
 c、启动测试case
 ```Shell
-cd dingtalk-stream-sdk-nodejs
+cd dingtalk-stream
 yarn
 npm run build
 npm start
 ```
 
-4、在项目中引用sdk，安装 dingtalk-stream-sdk-nodejs
+4、在项目中引用sdk，安装 dingtalk-stream
 
 ```Shell
-npm i dingtalk-stream-sdk-nodejs
+npm i dingtalk-stream
 ```
 
 代码中使用
 ```javascript
-const DWClient = require("dingtalk-stream-sdk-nodejs");
+const DWClient = require("dingtalk-stream");
 const config = require("./config.json");
 
 const client = new DWClient({
@@ -69,6 +71,32 @@ client.registerCallbackListener('/v1.0/im/bot/messages/get', async (res) => {
     const {messageId} = res.headers;
     const { text, senderStaffId, sessionWebhook } = JSON.parse(res.data);
   })
+  .registerCallbackListener(
+    '/v1.0/graph/api/invoke',
+    async (res: DWClientDownStream) => {
+      // 注册AI插件回调事件
+      console.log("收到ai消息");
+      const { messageId } = res.headers;
+
+      // 添加业务逻辑
+      console.log(res);
+      console.log(JSON.parse(res.data));
+
+      // 通过Stream返回数据
+      client.sendGraphAPIResponse(messageId, {
+        response: {
+          statusLine: {
+            code: 200,
+            reasonPhrase: "OK",
+          },
+          headers: {},
+          body: JSON.stringify({
+            text: "你好",
+          }),
+        },
+      });
+    }
+  )
   .connect();
 ```
 
@@ -77,6 +105,9 @@ client.registerCallbackListener('/v1.0/im/bot/messages/get', async (res) => {
 进入钉钉开发者后台，选择企业内部应用，在应用管理的左侧导航中，选择“事件与回调”。
 “订阅管理”中，“推送方式”选项中，选择 “Stream 模式”，并保存
 
+### AI 应用 - 技能插件，Graph API 类型插件使用 （可选）
+
+配置好魔法棒应用，并在技能中使用了Graph API类型插件。
 
 ### 技术支持
 

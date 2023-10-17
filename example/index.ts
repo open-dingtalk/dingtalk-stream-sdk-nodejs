@@ -5,6 +5,7 @@ import config from './config.json' assert {type: 'json'};
 const client = new DWClient({
   clientId: config.clientId,
   clientSecret: config.clientSecret,
+  debug: false
 });
 client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     // 注册机器人回调事件

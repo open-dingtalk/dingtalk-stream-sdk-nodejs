@@ -1,3 +1,6 @@
+export const GATEWAY_URL = 'https://api.dingtalk.com/v1.0/gateway/connections/open';
+export const GET_TOKEN_URL = 'https://oapi.dingtalk.com/gettoken';
+
 
 /** 机器人消息回调 */
 export const TOPIC_ROBOT = '/v1.0/im/bot/messages/get';

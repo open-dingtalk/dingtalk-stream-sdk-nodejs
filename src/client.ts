@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { GraphAPIResponse } from './constants';
+import { GET_TOKEN_URL, GATEWAY_URL,GraphAPIResponse } from './constants';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -153,12 +153,12 @@ export class DWClient extends EventEmitter {
     this.printDebug('get connect endpoint by config');
     this.printDebug(this.config);
     const result = await axios.get(
-      `https://oapi.dingtalk.com/gettoken?appkey=${this.config.clientId}&appsecret=${this.config.clientSecret}`
+      `${GET_TOKEN_URL}?appkey=${this.config.clientId}&appsecret=${this.config.clientSecret}`
     );
     if (result.status === 200 && result.data.access_token) {
       this.config.access_token = result.data.access_token;
       const res = await axios({
-        url: 'https://pre-api.dingtalk.com/v1.0/gateway/connections/open',
+        url: GATEWAY_URL,
         method: 'POST',
         responseType: 'json',
         data: {

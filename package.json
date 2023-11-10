@@ -1,6 +1,6 @@
 {
   "name": "dingtalk-stream",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is easier to access the DingTalk",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

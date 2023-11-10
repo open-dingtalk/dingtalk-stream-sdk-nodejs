@@ -202,7 +202,8 @@ export class DWClient extends EventEmitter {
       // config dw connection when socket is open
       this.socket.on('open', () => {
         this.connected = true;
-        this.printDebug('Socket open');
+        console.info('[' + new Date().toISOString() + '] connect success');
+
         // check if keepalive (client-side heartbeat) is enabled
         // if enabled, start heartbeat for ping-pong
         if (this.config.keepAlive) {

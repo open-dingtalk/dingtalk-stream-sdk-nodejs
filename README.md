@@ -3,8 +3,11 @@ Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is e
 钉钉支持 Stream 模式接入事件推送、机器人收消息以及卡片回调，该 SDK 实现了 Stream 模式。相比 Webhook 模式，Stream 模式可以更简单的接入各类事件和回调。
 
 ## 快速开始
-npm ii
+```shell
+npm i
+npm run build
 npm start
+```
 
 ### 准备工作
 
@@ -36,14 +39,14 @@ npm start
 3、使用demo项目测试，启动服务：
 
 a、获取demo项目 
-```Shell
+```shell
  git clone git@github.com:open-dingtalk/dingtalk-stream-sdk-nodejs.git
 ```
 b、在example/config.json里配置应用信息。
 
 c、启动测试case
-```Shell
-cd dingtalk-stream
+```shell
+cd dingtalk-stream-sdk-nodejs
 yarn
 npm run build
 npm start
@@ -51,13 +54,13 @@ npm start
 
 4、在项目中引用sdk，安装 dingtalk-stream
 
-```Shell
+```shell
 npm i dingtalk-stream
 ```
 
 代码中使用
 ```javascript
-const DWClient = require("dingtalk-stream");
+const { DWClient } = require("dingtalk-stream");
 const config = require("./config.json");
 
 const client = new DWClient({

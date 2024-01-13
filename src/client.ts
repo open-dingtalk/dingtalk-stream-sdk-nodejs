@@ -60,7 +60,7 @@ export interface DWClientDownStream {
 }
 
 export interface OnEventReceived {
-  (msg: DWClientDownStream): EventAckData
+  (msg: DWClientDownStream): EventAckData | Promise<EventAckData>
 }
 
 export class DWClient extends EventEmitter {
@@ -333,9 +333,9 @@ export class DWClient extends EventEmitter {
     }
   }
 
-  onEvent(message: DWClientDownStream) {
+  async onEvent(message: DWClientDownStream) {
     this.printDebug("received event, message=" + JSON.stringify(message))
-    const ackData = this.onEventReceived(message)
+    const ackData = await this.onEventReceived(message)
     this.socket?.send(JSON.stringify({
       code: 200,
       headers: {

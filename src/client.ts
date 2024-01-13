@@ -60,7 +60,7 @@ export interface DWClientDownStream {
 }
 
 export interface OnEventReceived {
-  (msg: DWClientDownStream): EventAckData | Promise<EventAckData>
+  (msg: DWClientDownStream): Promise<EventAckData>
 }
 
 export class DWClient extends EventEmitter {
@@ -78,7 +78,7 @@ export class DWClient extends EventEmitter {
   private socket?: WebSocket;
   private dw_url?: string;
   private isAlive = false;
-  private onEventReceived: OnEventReceived = (msg: DWClientDownStream) => {return {status: EventAck.SUCCESS}};
+  private onEventReceived: OnEventReceived = async (msg: DWClientDownStream) => {return {status: EventAck.SUCCESS}};
 
   constructor(opts: {
     clientId: string;
@@ -114,7 +114,7 @@ export class DWClient extends EventEmitter {
   }
 
   registerAllEventListener(
-      onEventReceived: (v: DWClientDownStream) => EventAckData
+      onEventReceived: OnEventReceived
   ) {
     this.onEventReceived = onEventReceived;
     return this;

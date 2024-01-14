@@ -60,7 +60,7 @@ export interface DWClientDownStream {
 }
 
 export interface OnEventReceived {
-  (msg: DWClientDownStream): Promise<EventAckData>
+  (msg: DWClientDownStream): EventAckData | Promise<EventAckData>
 }
 
 export class DWClient extends EventEmitter {

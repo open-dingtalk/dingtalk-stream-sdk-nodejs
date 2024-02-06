@@ -1,7 +1,3 @@
-# DingTalk Stream Mode 介绍
-
-Node.js SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is easier to access the DingTalk chatbot
-
 钉钉支持 Stream 模式接入事件推送、机器人收消息以及卡片回调，该 SDK 实现了 Stream 模式。相比 Webhook 模式，Stream 模式可以更简单的接入各类事件和回调。
 
 ## 开发教程

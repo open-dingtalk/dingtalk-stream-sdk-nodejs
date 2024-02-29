@@ -36,17 +36,22 @@ client.registerCallbackListener(TOPIC_ROBOT, async (res) => {
     msgtype: "text",
   };
 
+  const accessToken = await client.getAccessToken();
   const result = await axios({
     url: sessionWebhook,
     method: "POST",
     responseType: "json",
     data: body,
     headers: {
-      "x-acs-dingtalk-access-token": client.getConfig().access_token,
+      "x-acs-dingtalk-access-token": accessToken,
     },
   });
 
-  return result.data;
+  // stream模式下，服务端推送消息到client后，会监听client响应，如果消息长时间未响应会在一定时间内(60s)重试推消息，可以通过此方法返回消息响应，避免多次接收服务端消息。
+  // 机器人topic，可以通过socketCallBackResponse方法返回消息响应
+  if(result?.data){
+    client.socketCallBackResponse(res.headers.messageId, result.data);
+  }
 });
 client
   .registerCallbackListener(

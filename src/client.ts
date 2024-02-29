@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { GET_TOKEN_URL, GATEWAY_URL,GraphAPIResponse } from './constants';
+import { TOPIC_ROBOT,GET_TOKEN_URL, GATEWAY_URL,GraphAPIResponse } from './constants.js';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -149,49 +149,52 @@ export class DWClient extends EventEmitter {
     return this;
   }
 
-  async getEndpoint() {
-    this.printDebug('get connect endpoint by config');
-    this.printDebug(this.config);
+  async getAccessToken() {
     const result = await axios.get(
       `${GET_TOKEN_URL}?appkey=${this.config.clientId}&appsecret=${this.config.clientSecret}`
     );
     if (result.status === 200 && result.data.access_token) {
       this.config.access_token = result.data.access_token;
-      const res = await axios({
-        url: GATEWAY_URL,
-        method: 'POST',
-        responseType: 'json',
-        data: {
-          clientId: this.config.clientId,
-          clientSecret: this.config.clientSecret,
-          ua: this.config.ua,
-          subscriptions: this.config.subscriptions,
-        },
-        headers: {
-          // 这个接口得加个，否则默认返回的会是xml
-          Accept: 'application/json',
-          'access-token': result.data.access_token, // 'd136e657-5998-4cc4-a055-2b7ceab0f212'
-        },
-      });
-
-      this.printDebug('res.data ' + JSON.stringify(res.data));
-      if (res.data) {
-        this.config.endpoint = res.data;
-        const { endpoint, ticket } = res.data;
-        if (!endpoint || !ticket) {
-          this.printDebug('endpoint or ticket is null');
-          throw new Error('endpoint or ticket is null');
-        }
-        this.dw_url = `${endpoint}?ticket=${ticket}`;
-        return this;
-      } else {
-        throw new Error('build: get endpoint failed');
-      }
+      return result.data.access_token;
     } else {
-      throw new Error('build: get access_token failed');
+      throw new Error('getAccessToken: get access_token failed');
     }
   }
 
+  async getEndpoint() {
+    this.printDebug('get connect endpoint by config');
+    this.printDebug(this.config);
+    const res = await axios({
+      url: GATEWAY_URL,
+      method: 'POST',
+      responseType: 'json',
+      data: {
+        clientId: this.config.clientId,
+        clientSecret: this.config.clientSecret,
+        ua: this.config.ua,
+        subscriptions: this.config.subscriptions,
+      },
+      headers: {
+        // 这个接口得加个，否则默认返回的会是xml
+        Accept: 'application/json'
+      },
+    });
+
+    this.printDebug('res.data ' + JSON.stringify(res.data));
+    if (res.data) {
+      this.config.endpoint = res.data;
+      const { endpoint, ticket } = res.data;
+      if (!endpoint || !ticket) {
+        this.printDebug('endpoint or ticket is null');
+        throw new Error('endpoint or ticket is null');
+      }
+      this.dw_url = `${endpoint}?ticket=${ticket}`;
+      return this;
+    } else {
+      throw new Error('build: get endpoint failed');
+    }
+  }
+  
   _connect() {
     return new Promise<void>((resolve, reject) => {
       this.userDisconnect = false;
@@ -279,10 +282,9 @@ export class DWClient extends EventEmitter {
 
   onDownStream(data: string) {
     this.printDebug('Received message from dingtalk websocket server');
-    this.printDebug(data);
-    // {"specVersion":"1.0","type":"SYSTEM","headers":{"contentType":"application/json","messageId":"c0a800e9168327945646012d43","time":"1683279456460","topic":"disconnect"},"data":"{\"reason\":\"persistent connection is timeout\"}"}
-    // {"specVersion":"1.0","type":"CALLBACK","headers":{"appId":"9256b875-17e5-46a8-890a-bf4246dc5349","connectionId":"c3faec14-ebe9-11ed-8943-0ec429f1b9a1","contentType":"application/json","messageId":"213f1d00_853_187b7df781f_225d","time":"1683362492940","topic":"bot_got_msg"},"data":"{\"conversationId\":\"cidFbEwwavwcAsXDZbYqSBLnA==\",\"atUsers\":[{\"dingtalkId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\"}],\"chatbotCorpId\":\"ding9f50b15bccd16741\",\"chatbotUserId\":\"$:LWCP_v1:$25jBd/IW606RTMrGnMs9AuLMeuAztDrv\",\"msgId\":\"msgqEufncv9gVqy7ia60LYs3w==\",\"senderNick\":\"骏隆（主用钉）\",\"isAdmin\":true,\"senderStaffId\":\"01426861-1254332033\",\"sessionWebhookExpiredTime\":1683363692884,\"createAt\":1683362491872,\"senderCorpId\":\"ding9f50b15bccd16741\",\"conversationType\":\"2\",\"senderId\":\"$:LWCP_v1:$+PxJZVhRkpC139mPH6L7aw==\",\"conversationTitle\":\"机器人长链接事件测试群\",\"isInAtList\":true,\"sessionWebhook\":\"https://oapi.dingtalk.com/robot/sendBySession?session=2664f1467475bd90fcba36234c735997\",\"text\":{\"content\":\" ss\"},\"robotCode\":\"dingphtembyvlbeq2y4d\",\"msgtype\":\"text\"}"}
+   
     const msg = JSON.parse(data) as DWClientDownStream;
+    this.printDebug(msg);
     switch (msg.type) {
       case 'SYSTEM':
         this.onSystem(msg);
@@ -367,6 +369,22 @@ export class DWClient extends EventEmitter {
       data: JSON.stringify(value),
     };
     this.socket?.send(JSON.stringify(msg));
+  }
+
+  /**
+   * 消息响应，避免服务端重试. 
+   * stream模式下，服务端推送消息到client后，会监听client响应，如果消息长时间未响应会在一定时间内(60s)重试推消息，可以通过此方法返回消息响应，避免多次接收服务端消息。
+   * @param messageId
+   * @param result
+   * @returns
+   * @memberof DWClient
+   * @example
+   * ```javascript
+   * client.socketResponse(res.headers.messageId, result.data);
+   * ```
+   */
+  socketCallBackResponse(messageId: string, result: any) {
+    this.send(messageId, {response : result});
   }
 
   sendGraphAPIResponse(messageId: string, value: GraphAPIResponse) {

@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { TOPIC_ROBOT,GET_TOKEN_URL, GATEWAY_URL,GraphAPIResponse } from './constants.js';
+import { GET_TOKEN_URL, GATEWAY_URL,GATEWAY_URL_PRE, GraphAPIResponse } from './constants.js';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -77,6 +77,7 @@ export class DWClient extends EventEmitter {
   readonly config: DWClientConfig;
   private socket?: WebSocket;
   private dw_url?: string;
+  private openApiHost:string = GATEWAY_URL;
   private isAlive = false;
   private onEventReceived: OnEventReceived = (msg: DWClientDownStream) => {return {status: EventAck.SUCCESS}};
 
@@ -104,6 +105,10 @@ export class DWClient extends EventEmitter {
 
   getConfig() {
     return { ...this.config };
+  }
+
+  preEnv() {
+    this.openApiHost = GATEWAY_URL_PRE;
   }
 
   printDebug(msg: object | string) {
@@ -165,7 +170,7 @@ export class DWClient extends EventEmitter {
     this.printDebug('get connect endpoint by config');
     this.printDebug(this.config);
     const res = await axios({
-      url: GATEWAY_URL,
+      url: this.openApiHost,
       method: 'POST',
       responseType: 'json',
       data: {

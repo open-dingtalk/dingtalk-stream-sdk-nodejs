@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { GET_TOKEN_URL, GATEWAY_URL,GATEWAY_URL_PRE, GraphAPIResponse } from './constants.js';
+import { GET_TOKEN_URL, GATEWAY_URL, GATEWAY_URL_PRE, GraphAPIResponse } from './constants.js';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -71,13 +71,13 @@ export class DWClient extends EventEmitter {
   private userDisconnect = false;
   private reconnectInterval = 1000;
   private heartbeat_interval = 8000;
+  private openApiHost = GATEWAY_URL;
   private heartbeatIntervallId?: NodeJS.Timeout;
 
   private sslopts = { rejectUnauthorized: true };
   readonly config: DWClientConfig;
   private socket?: WebSocket;
   private dw_url?: string;
-  private openApiHost:string = GATEWAY_URL;
   private isAlive = false;
   private onEventReceived: OnEventReceived = (msg: DWClientDownStream) => {return {status: EventAck.SUCCESS}};
 
@@ -109,6 +109,7 @@ export class DWClient extends EventEmitter {
 
   preEnv() {
     this.openApiHost = GATEWAY_URL_PRE;
+    return this;
   }
 
   printDebug(msg: object | string) {

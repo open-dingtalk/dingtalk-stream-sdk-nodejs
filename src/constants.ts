@@ -1,4 +1,5 @@
 export const GATEWAY_URL = 'https://api.dingtalk.com/v1.0/gateway/connections/open';
+export const GATEWAY_URL_PRE = 'https://pre-api.dingtalk.com/v1.0/gateway/connections/open';
 export const GET_TOKEN_URL = 'https://oapi.dingtalk.com/gettoken';
 
 

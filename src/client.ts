@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { TOPIC_ROBOT,GET_TOKEN_URL, GATEWAY_URL,GraphAPIResponse } from './constants.js';
+import { GET_TOKEN_URL, GATEWAY_URL, GATEWAY_URL_PRE, GraphAPIResponse } from './constants.js';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -71,6 +71,7 @@ export class DWClient extends EventEmitter {
   private userDisconnect = false;
   private reconnectInterval = 1000;
   private heartbeat_interval = 8000;
+  private openApiHost = GATEWAY_URL;
   private heartbeatIntervallId?: NodeJS.Timeout;
 
   private sslopts = { rejectUnauthorized: true };
@@ -104,6 +105,11 @@ export class DWClient extends EventEmitter {
 
   getConfig() {
     return { ...this.config };
+  }
+
+  preEnv() {
+    this.openApiHost = GATEWAY_URL_PRE;
+    return this;
   }
 
   printDebug(msg: object | string) {
@@ -165,7 +171,7 @@ export class DWClient extends EventEmitter {
     this.printDebug('get connect endpoint by config');
     this.printDebug(this.config);
     const res = await axios({
-      url: GATEWAY_URL,
+      url: this.openApiHost,
       method: 'POST',
       responseType: 'json',
       data: {

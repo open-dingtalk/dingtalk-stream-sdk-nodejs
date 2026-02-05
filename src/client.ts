@@ -254,6 +254,10 @@ export class DWClient extends EventEmitter {
       this.socket.on('error', (err) => {
         this.printDebug('SOCKET ERROR');
         console.warn('ERROR', err);
+        // Fix: Terminate socket on error to trigger 'close' event and ensure reconnection
+        // Without this, TLS handshake failures or other errors may not trigger 'close',
+        // causing the client to stay disconnected forever when autoReconnect is enabled
+        this.socket?.terminate();
       });
 
       resolve();

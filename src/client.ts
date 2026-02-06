@@ -200,7 +200,14 @@ export class DWClient extends EventEmitter {
       this.userDisconnect = false;
 
       this.printDebug('Connecting to dingtalk websocket @ ' + this.dw_url);
-      this.socket = new WebSocket(this.dw_url!, this.sslopts);
+      try {
+        this.socket = new WebSocket(this.dw_url!, this.sslopts);
+      } catch (err) {
+        this.printDebug('WebSocket constructor error');
+        console.warn('ERROR', err);
+        reject(err);
+        return;
+      }
 
       // config dw connection when socket is open
       this.socket.on('open', () => {
@@ -224,6 +231,7 @@ export class DWClient extends EventEmitter {
             this.socket?.ping('', true);
           }, this.heartbeat_interval);
         }
+        resolve();
       });
 
       // wait for ping-pong with server
@@ -258,15 +266,23 @@ export class DWClient extends EventEmitter {
         // Without this, TLS handshake failures or other errors may not trigger 'close',
         // causing the client to stay disconnected forever when autoReconnect is enabled
         this.socket?.terminate();
+        reject(err);
       });
-
-      resolve();
     });
   }
 
   async connect() {
-    await this.getEndpoint();
-    await this._connect();
+    try {
+      await this.getEndpoint();
+      await this._connect();
+    } catch (err) {
+      if (this.config.autoReconnect && !this.userDisconnect) {
+        this.printDebug(
+          'Connect failed, retrying in ' + this.reconnectInterval / 1000 + ' seconds...'
+        );
+        setTimeout(() => this.connect(), this.reconnectInterval);
+      }
+    }
   }
 
   disconnect() {

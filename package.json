@@ -37,7 +37,10 @@
     "build": "rimraf dist && rollup -c",
     "dev": "rollup -c --watch --watch.include 'src/**' -m inline",
     "prepublishOnly": "pnpm build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm build && node test/reconnect-mock.mjs",
+    "test:prod": "pnpm build && node test/reconnect-prod.mjs",
+    "test:demo": "node test/reconnect-storm-demo.mjs"
   },
   "repository": {
     "type": "git",
@@ -72,6 +75,7 @@
     "@types/debug": "^4.1.8",
     "@types/node": ">=16",
     "@types/ws": "^8.5.5",
+    "nock": "^14.0.11",
     "rimraf": "^5.0.1",
     "rollup": "^3.28.0",
     "rollup-plugin-dts": "^6.0.0",

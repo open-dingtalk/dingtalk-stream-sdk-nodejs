@@ -234,8 +234,6 @@ export class DWClient extends EventEmitter {
 
   _connect() {
     return new Promise<void>((resolve, reject) => {
-      this.userDisconnect = false;
-
       this.printDebug('Connecting to dingtalk websocket @ ' + this.dw_url);
       try {
         this.socket = new WebSocket(this.dw_url!, this.sslopts);
@@ -308,15 +306,22 @@ export class DWClient extends EventEmitter {
       this.printDebug('connect() already in progress, skipping');
       return;
     }
+    this.userDisconnect = false;
     this.isConnecting = true;
     try {
       this.cleanup();
       await this.getEndpoint();
+      // bail if disconnect() was called during the async getEndpoint()
+      if (this.userDisconnect) return;
       await this._connect();
     } catch (err) {
       this.printDebug('Connect failed: ' + (err instanceof Error ? err.message : String(err)));
-      this.reconnectAttempts++;
-      this.scheduleReconnect();
+      if (!this.userDisconnect) {
+        this.reconnectAttempts++;
+        this.isConnecting = false;
+        this.scheduleReconnect();
+      }
+      return;
     } finally {
       this.isConnecting = false;
     }

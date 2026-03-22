@@ -69,9 +69,13 @@ export class DWClient extends EventEmitter {
   registered = false;
   reconnecting = false;
   private userDisconnect = false;
-  private reconnectInterval = 1000;
+  private reconnectBaseInterval = 1000;
+  private reconnectMaxInterval = 60000;
+  private reconnectAttempts = 0;
   private heartbeat_interval = 8000;
   private heartbeatIntervallId?: NodeJS.Timeout;
+  private reconnectTimerId?: NodeJS.Timeout;
+  private isConnecting = false;
 
   private sslopts = { rejectUnauthorized: true };
   readonly config: DWClientConfig;
@@ -195,10 +199,41 @@ export class DWClient extends EventEmitter {
     }
   }
   
+  private cleanup() {
+    if (this.heartbeatIntervallId !== undefined) {
+      clearInterval(this.heartbeatIntervallId);
+      this.heartbeatIntervallId = undefined;
+    }
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+        this.socket.terminate();
+      }
+      this.socket = undefined;
+    }
+  }
+
+  private scheduleReconnect() {
+    if (!this.config.autoReconnect || this.userDisconnect || this.isConnecting) {
+      return;
+    }
+    const delay = Math.min(
+      this.reconnectBaseInterval * Math.pow(2, this.reconnectAttempts) + Math.random() * 1000,
+      this.reconnectMaxInterval,
+    );
+    this.reconnecting = true;
+    this.printDebug('Reconnecting in ' + (delay / 1000).toFixed(1) + ' seconds... (attempt ' + (this.reconnectAttempts + 1) + ')');
+    if (this.reconnectTimerId) {
+      clearTimeout(this.reconnectTimerId);
+    }
+    this.reconnectTimerId = setTimeout(() => {
+      this.reconnectTimerId = undefined;
+      this.connect();
+    }, delay);
+  }
+
   _connect() {
     return new Promise<void>((resolve, reject) => {
-      this.userDisconnect = false;
-
       this.printDebug('Connecting to dingtalk websocket @ ' + this.dw_url);
       try {
         this.socket = new WebSocket(this.dw_url!, this.sslopts);
@@ -209,90 +244,101 @@ export class DWClient extends EventEmitter {
         return;
       }
 
-      // config dw connection when socket is open
+      let settled = false;
+
       this.socket.on('open', () => {
         this.connected = true;
+        this.reconnectAttempts = 0;
         console.info('[' + new Date().toISOString() + '] connect success');
 
-        // check if keepalive (client-side heartbeat) is enabled
-        // if enabled, start heartbeat for ping-pong
         if (this.config.keepAlive) {
           this.isAlive = true;
           this.heartbeatIntervallId = setInterval(() => {
-            // if ping-pong need to much time, longer than heartbeat, terminate socket connection
             if (this.isAlive === false) {
               console.error(
                 'TERMINATE SOCKET: Ping Pong does not transfer heartbeat within heartbeat intervall'
               );
               return this.socket?.terminate();
             }
-            // if ping-pong ok, prepare next one
             this.isAlive = false;
             this.socket?.ping('', true);
           }, this.heartbeat_interval);
         }
+        settled = true;
         resolve();
       });
 
-      // wait for ping-pong with server
       this.socket.on('pong', () => {
         this.heartbeat();
       });
 
-      // on receiving messages from dingtalk websocket server
       this.socket.on('message', (data: string) => {
         this.onDownStream(data);
       });
 
-      this.socket.on('close', (err) => {
+      this.socket.on('close', () => {
         this.printDebug('Socket closed');
         this.connected = false;
         this.registered = false;
-        // perorm reconnection (if not canceled by user)
-        if (this.config.autoReconnect && !this.userDisconnect) {
-          this.reconnecting = true;
-          this.printDebug(
-            'Reconnecting in ' + this.reconnectInterval / 1000 + ' seconds...'
-          );
-          setTimeout(this.connect.bind(this), this.reconnectInterval);
+        if (this.heartbeatIntervallId !== undefined) {
+          clearInterval(this.heartbeatIntervallId);
+          this.heartbeatIntervallId = undefined;
+        }
+        if (settled) {
+          this.scheduleReconnect();
         }
       });
 
-      // on socket errors
-      this.socket.on('error', (err) => {
+      this.socket.on('error', (err: Error) => {
         this.printDebug('SOCKET ERROR');
         console.warn('ERROR', err);
-        // Fix: Terminate socket on error to trigger 'close' event and ensure reconnection
-        // Without this, TLS handshake failures or other errors may not trigger 'close',
-        // causing the client to stay disconnected forever when autoReconnect is enabled
         this.socket?.terminate();
-        reject(err);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
       });
     });
   }
 
   async connect() {
+    if (this.isConnecting) {
+      this.printDebug('connect() already in progress, skipping');
+      return;
+    }
+    this.userDisconnect = false;
+    this.isConnecting = true;
     try {
+      this.cleanup();
       await this.getEndpoint();
+      // bail if disconnect() was called during the async getEndpoint()
+      if (this.userDisconnect) return;
       await this._connect();
     } catch (err) {
-      if (this.config.autoReconnect && !this.userDisconnect) {
-        this.printDebug(
-          'Connect failed, retrying in ' + this.reconnectInterval / 1000 + ' seconds...'
-        );
-        setTimeout(() => this.connect(), this.reconnectInterval);
+      this.printDebug('Connect failed: ' + (err instanceof Error ? err.message : String(err)));
+      if (!this.userDisconnect) {
+        this.reconnectAttempts++;
+        this.isConnecting = false;
+        this.scheduleReconnect();
       }
+      return;
+    } finally {
+      this.isConnecting = false;
     }
   }
 
   disconnect() {
     console.info('Disconnecting.');
     this.userDisconnect = true;
-    // if client-side heartbeat is active, cancel the heartbeat intervall
-    if (this.config.keepAlive && this.heartbeatIntervallId !== undefined) {
-      clearInterval(this.heartbeatIntervallId!);
+    if (this.reconnectTimerId) {
+      clearTimeout(this.reconnectTimerId);
+      this.reconnectTimerId = undefined;
     }
-    this.socket?.close();
+    this.reconnecting = false;
+    this.reconnectAttempts = 0;
+    this.cleanup();
+    this.connected = false;
+    this.registered = false;
   }
 
   heartbeat() {

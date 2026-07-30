@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
-import { TOPIC_ROBOT,GET_TOKEN_URL, GATEWAY_URL,GraphAPIResponse } from './constants.js';
+import { GET_TOKEN_URL, GATEWAY_URL, GraphAPIResponse } from './constants.js';
 
 export enum EventAck {
   SUCCESS = "SUCCESS",
@@ -60,7 +60,7 @@ export interface DWClientDownStream {
 }
 
 export interface OnEventReceived {
-  (msg: DWClientDownStream): EventAckData
+  (msg: DWClientDownStream): EventAckData | Promise<EventAckData>;
 }
 
 export class DWClient extends EventEmitter {
@@ -76,6 +76,8 @@ export class DWClient extends EventEmitter {
   private heartbeatIntervallId?: NodeJS.Timeout;
   private reconnectTimerId?: NodeJS.Timeout;
   private isConnecting = false;
+  private abortPendingConnect?: (reason: Error) => void;
+  private readonly httpTimeout = 10000;
 
   private sslopts = { rejectUnauthorized: true };
   readonly config: DWClientConfig;
@@ -90,11 +92,16 @@ export class DWClient extends EventEmitter {
     ua?: string;
     keepAlive?: boolean;
     debug?: boolean;
+    autoReconnect?: boolean;
+    access_token?: string;
+    subscriptions?: DWClientConfig['subscriptions'];
   }) {
     super();
+    const subscriptions = opts.subscriptions ?? defaultConfig.subscriptions;
     this.config = {
       ...defaultConfig,
       ...opts,
+      subscriptions: subscriptions.map((subscription) => ({ ...subscription })),
     };
 
     if (!this.config.clientId || !this.config.clientSecret) {
@@ -107,7 +114,10 @@ export class DWClient extends EventEmitter {
   }
 
   getConfig() {
-    return { ...this.config };
+    return {
+      ...this.config,
+      subscriptions: this.config.subscriptions.map((subscription) => ({ ...subscription })),
+    };
   }
 
   printDebug(msg: object | string) {
@@ -118,7 +128,7 @@ export class DWClient extends EventEmitter {
   }
 
   registerAllEventListener(
-      onEventReceived: (v: DWClientDownStream) => EventAckData
+      onEventReceived: OnEventReceived
   ) {
     this.onEventReceived = onEventReceived;
     return this;
@@ -155,7 +165,8 @@ export class DWClient extends EventEmitter {
 
   async getAccessToken() {
     const result = await axios.get(
-      `${GET_TOKEN_URL}?appkey=${this.config.clientId}&appsecret=${this.config.clientSecret}`
+      `${GET_TOKEN_URL}?appkey=${this.config.clientId}&appsecret=${this.config.clientSecret}`,
+      { timeout: this.httpTimeout },
     );
     if (result.status === 200 && result.data.access_token) {
       this.config.access_token = result.data.access_token;
@@ -167,10 +178,10 @@ export class DWClient extends EventEmitter {
 
   async getEndpoint() {
     this.printDebug('get connect endpoint by config');
-    this.printDebug(this.config);
     const res = await axios({
       url: GATEWAY_URL,
       method: 'POST',
+      timeout: this.httpTimeout,
       responseType: 'json',
       data: {
         clientId: this.config.clientId,
@@ -184,37 +195,54 @@ export class DWClient extends EventEmitter {
       },
     });
 
-    this.printDebug('res.data ' + JSON.stringify(res.data));
     if (res.data) {
-      this.config.endpoint = res.data;
       const { endpoint, ticket } = res.data;
       if (!endpoint || !ticket) {
         this.printDebug('endpoint or ticket is null');
         throw new Error('endpoint or ticket is null');
       }
+      this.config.endpoint = endpoint;
       this.dw_url = `${endpoint}?ticket=${ticket}`;
+      this.printDebug('received websocket endpoint');
       return this;
     } else {
       throw new Error('build: get endpoint failed');
     }
   }
   
-  private cleanup() {
+  private clearHeartbeat() {
     if (this.heartbeatIntervallId !== undefined) {
       clearInterval(this.heartbeatIntervallId);
       this.heartbeatIntervallId = undefined;
     }
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
-        this.socket.terminate();
-      }
-      this.socket = undefined;
+  }
+
+  private disposeSocket(socket: WebSocket) {
+    socket.removeAllListeners();
+    // ws emits an asynchronous error when terminate() aborts an opening handshake.
+    socket.on('error', () => undefined);
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      socket.terminate();
+    }
+  }
+
+  private cleanup(reason = new Error('WebSocket connection was replaced')) {
+    this.clearHeartbeat();
+    this.connected = false;
+    this.registered = false;
+    const abortPendingConnect = this.abortPendingConnect;
+    this.abortPendingConnect = undefined;
+    abortPendingConnect?.(reason);
+
+    const socket = this.socket;
+    this.socket = undefined;
+    if (socket) {
+      this.disposeSocket(socket);
     }
   }
 
   private scheduleReconnect() {
-    if (!this.config.autoReconnect || this.userDisconnect || this.isConnecting) {
+    if (!this.config.autoReconnect || this.userDisconnect || this.reconnectTimerId) {
       return;
     }
     const delay = Math.min(
@@ -223,20 +251,19 @@ export class DWClient extends EventEmitter {
     );
     this.reconnecting = true;
     this.printDebug('Reconnecting in ' + (delay / 1000).toFixed(1) + ' seconds... (attempt ' + (this.reconnectAttempts + 1) + ')');
-    if (this.reconnectTimerId) {
-      clearTimeout(this.reconnectTimerId);
-    }
     this.reconnectTimerId = setTimeout(() => {
       this.reconnectTimerId = undefined;
-      this.connect();
+      void this.connectInternal(true);
     }, delay);
   }
 
-  _connect() {
+  _connect(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this.printDebug('Connecting to dingtalk websocket @ ' + this.dw_url);
+      this.printDebug('Connecting to dingtalk websocket');
+      let socket: WebSocket;
       try {
-        this.socket = new WebSocket(this.dw_url!, this.sslopts);
+        socket = new WebSocket(this.dw_url!, this.sslopts);
+        this.socket = socket;
       } catch (err) {
         this.printDebug('WebSocket constructor error');
         console.warn('ERROR', err);
@@ -245,8 +272,35 @@ export class DWClient extends EventEmitter {
       }
 
       let settled = false;
+      let opened = false;
 
-      this.socket.on('open', () => {
+      const clearAbortHandler = () => {
+        if (this.abortPendingConnect === abortConnect) {
+          this.abortPendingConnect = undefined;
+        }
+      };
+      const resolveOnce = () => {
+        if (settled) return;
+        settled = true;
+        clearAbortHandler();
+        resolve();
+      };
+      const rejectOnce = (reason: Error) => {
+        if (settled) return;
+        settled = true;
+        clearAbortHandler();
+        reject(reason);
+      };
+      const abortConnect = (reason: Error) => rejectOnce(reason);
+      this.abortPendingConnect = abortConnect;
+
+      socket.on('open', () => {
+        if (this.socket !== socket || this.userDisconnect) {
+          this.disposeSocket(socket);
+          rejectOnce(new Error('WebSocket connection was cancelled'));
+          return;
+        }
+        opened = true;
         this.connected = true;
         this.reconnectAttempts = 0;
         console.info('[' + new Date().toISOString() + '] connect success');
@@ -254,59 +308,73 @@ export class DWClient extends EventEmitter {
         if (this.config.keepAlive) {
           this.isAlive = true;
           this.heartbeatIntervallId = setInterval(() => {
+            if (this.socket !== socket) return;
             if (this.isAlive === false) {
               console.error(
                 'TERMINATE SOCKET: Ping Pong does not transfer heartbeat within heartbeat intervall'
               );
-              return this.socket?.terminate();
+              return socket.terminate();
             }
             this.isAlive = false;
-            this.socket?.ping('', true);
+            socket.ping('', true);
           }, this.heartbeat_interval);
         }
-        settled = true;
-        resolve();
+        resolveOnce();
       });
 
-      this.socket.on('pong', () => {
+      socket.on('pong', () => {
         this.heartbeat();
       });
 
-      this.socket.on('message', (data: string) => {
-        this.onDownStream(data);
+      socket.on('message', (data) => {
+        this.onDownStream(data.toString(), socket);
       });
 
-      this.socket.on('close', () => {
+      socket.on('close', () => {
+        if (this.socket !== socket) return;
+        this.socket = undefined;
         this.printDebug('Socket closed');
         this.connected = false;
         this.registered = false;
-        if (this.heartbeatIntervallId !== undefined) {
-          clearInterval(this.heartbeatIntervallId);
-          this.heartbeatIntervallId = undefined;
-        }
-        if (settled) {
+        this.clearHeartbeat();
+        if (!opened) {
+          rejectOnce(new Error('WebSocket closed before the connection was established'));
+        } else {
           this.scheduleReconnect();
         }
       });
 
-      this.socket.on('error', (err: Error) => {
+      socket.on('error', (err: Error) => {
+        if (this.socket !== socket) return;
         this.printDebug('SOCKET ERROR');
         console.warn('ERROR', err);
-        this.socket?.terminate();
-        if (!settled) {
-          settled = true;
-          reject(err);
+        rejectOnce(err);
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.terminate();
         }
       });
     });
   }
 
   async connect() {
+    return this.connectInternal(false);
+  }
+
+  private async connectInternal(reconnectAttempt: boolean) {
+    if (reconnectAttempt && this.userDisconnect) {
+      return;
+    }
     if (this.isConnecting) {
       this.printDebug('connect() already in progress, skipping');
       return;
     }
-    this.userDisconnect = false;
+    if (!reconnectAttempt) {
+      this.userDisconnect = false;
+      if (this.reconnectTimerId) {
+        clearTimeout(this.reconnectTimerId);
+        this.reconnectTimerId = undefined;
+      }
+    }
     this.isConnecting = true;
     try {
       this.cleanup();
@@ -318,7 +386,6 @@ export class DWClient extends EventEmitter {
       this.printDebug('Connect failed: ' + (err instanceof Error ? err.message : String(err)));
       if (!this.userDisconnect) {
         this.reconnectAttempts++;
-        this.isConnecting = false;
         this.scheduleReconnect();
       }
       return;
@@ -336,7 +403,7 @@ export class DWClient extends EventEmitter {
     }
     this.reconnecting = false;
     this.reconnectAttempts = 0;
-    this.cleanup();
+    this.cleanup(new Error('WebSocket connection was cancelled by disconnect()'));
     this.connected = false;
     this.registered = false;
   }
@@ -346,26 +413,43 @@ export class DWClient extends EventEmitter {
     this.printDebug('CLIENT-SIDE HEARTBEAT');
   }
 
-  onDownStream(data: string) {
+  onDownStream(data: string, socket = this.socket) {
     this.printDebug('Received message from dingtalk websocket server');
-   
-    const msg = JSON.parse(data) as DWClientDownStream;
-    this.printDebug(msg);
-    switch (msg.type) {
-      case 'SYSTEM':
-        this.onSystem(msg);
-        break;
-      case 'EVENT':
-        this.onEvent(msg);
-        break;
-      case 'CALLBACK':
-        // 处理回调消息
-        this.onCallback(msg);
-        break;
+
+    try {
+      const msg = JSON.parse(data) as DWClientDownStream;
+      this.printDebug(msg);
+      switch (msg.type) {
+        case 'SYSTEM':
+          this.onSystem(msg, socket);
+          break;
+        case 'EVENT':
+          void this.onEvent(msg, socket);
+          break;
+        case 'CALLBACK':
+          // 处理回调消息
+          this.onCallback(msg);
+          break;
+      }
+    } catch (err) {
+      console.warn('Failed to process downstream message', err);
     }
   }
 
-  onSystem(downstream: DWClientDownStream) {
+  private sendFrame(socket: WebSocket | undefined, payload: object, onSent?: () => void) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      onSent?.();
+      return;
+    }
+    socket.send(JSON.stringify(payload), (err) => {
+      if (err) {
+        console.warn('Failed to send websocket response', err);
+      }
+      onSent?.();
+    });
+  }
+
+  onSystem(downstream: DWClientDownStream, socket = this.socket) {
     switch (downstream.headers.topic) {
       case 'CONNECTED': {
         this.printDebug('CONNECTED');
@@ -380,6 +464,12 @@ export class DWClient extends EventEmitter {
       case 'disconnect': {
         this.connected = false;
         this.registered = false;
+        this.sendFrame(socket, {
+          code: 200,
+          headers: downstream.headers,
+          message: 'OK',
+          data: downstream.data,
+        }, () => socket?.close());
         break;
       }
       case 'KEEPALIVE': {
@@ -388,31 +478,35 @@ export class DWClient extends EventEmitter {
       }
       case 'ping': {
         this.printDebug('PING');
-        this.socket?.send(
-          JSON.stringify({
-            code: 200,
-            headers: downstream.headers,
-            message: 'OK',
-            data: downstream.data,
-          })
-        );
+        this.sendFrame(socket, {
+          code: 200,
+          headers: downstream.headers,
+          message: 'OK',
+          data: downstream.data,
+        });
         break;
       }
     }
   }
 
-  onEvent(message: DWClientDownStream) {
-    this.printDebug("received event, message=" + JSON.stringify(message))
-    const ackData = this.onEventReceived(message)
-    this.socket?.send(JSON.stringify({
+  async onEvent(message: DWClientDownStream, socket = this.socket) {
+    this.printDebug('received event, message=' + JSON.stringify(message));
+    let ackData: EventAckData;
+    try {
+      ackData = await this.onEventReceived(message);
+    } catch (err) {
+      console.warn('Event listener failed', err);
+      ackData = { status: EventAck.LATER };
+    }
+    this.sendFrame(socket, {
       code: 200,
       headers: {
-        contentType: "application/json",
+        contentType: 'application/json',
         messageId: message.headers.messageId,
       },
       message: 'OK',
       data: JSON.stringify(ackData)
-    }));
+    });
   }
 
   onCallback(message: DWClientDownStream) {
@@ -434,7 +528,7 @@ export class DWClient extends EventEmitter {
       message: 'OK',
       data: JSON.stringify(value),
     };
-    this.socket?.send(JSON.stringify(msg));
+    this.sendFrame(this.socket, msg);
   }
 
   /**
@@ -468,6 +562,6 @@ export class DWClient extends EventEmitter {
       message: 'OK',
       data: JSON.stringify(value),
     };
-    this.socket?.send(JSON.stringify(msg));
+    this.sendFrame(this.socket, msg);
   }
 }

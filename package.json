@@ -36,10 +36,10 @@
     "start": "ts-node-esm example/index.ts",
     "build": "rimraf dist && rollup -c",
     "dev": "rollup -c --watch --watch.include 'src/**' -m inline",
-    "prepublishOnly": "pnpm build",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm build && node test/reconnect-mock.mjs",
-    "test:prod": "pnpm build && node test/reconnect-prod.mjs",
+    "test": "npm run build && node test/lifecycle-mock.mjs && node test/reconnect-mock.mjs",
+    "test:prod": "npm run build && node test/reconnect-prod.mjs",
     "test:demo": "node test/reconnect-storm-demo.mjs"
   },
   "repository": {
@@ -75,6 +75,7 @@
     "@types/debug": "^4.1.8",
     "@types/node": ">=16",
     "@types/ws": "^8.5.5",
+    "esbuild": "^0.19.12",
     "nock": "^14.0.11",
     "rimraf": "^5.0.1",
     "rollup": "^3.28.0",

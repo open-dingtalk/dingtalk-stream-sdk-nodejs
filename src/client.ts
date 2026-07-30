@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import axios from 'axios';
 import EventEmitter from 'events';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { GET_TOKEN_URL, GATEWAY_URL, GraphAPIResponse } from './constants.js';
 
 export enum EventAck {
@@ -16,6 +17,8 @@ export interface EventAckData {
 const defaultConfig = {
   autoReconnect: true,
   keepAlive: false,
+  maxPendingEventHandlers: 100,
+  maxPendingCallbackHandlers: 100,
   ua: '',
   subscriptions: [
     {
@@ -24,6 +27,9 @@ const defaultConfig = {
     },
   ],
 };
+
+const maxCachedEventResults = 10000;
+const eventResultTtlMs = 5 * 60 * 1000;
 
 export interface DWClientConfig {
   clientId: string;
@@ -34,6 +40,8 @@ export interface DWClientConfig {
   endpoint?: string;
   access_token?: string;
   autoReconnect?: boolean;
+  maxPendingEventHandlers?: number;
+  maxPendingCallbackHandlers?: number;
   subscriptions: Array<{
     type: string;
     topic: string;
@@ -60,7 +68,7 @@ export interface DWClientDownStream {
 }
 
 export interface OnEventReceived {
-  (msg: DWClientDownStream): EventAckData | Promise<EventAckData>;
+  (msg: DWClientDownStream, signal?: AbortSignal): EventAckData | Promise<EventAckData>;
 }
 
 export class DWClient extends EventEmitter {
@@ -76,11 +84,24 @@ export class DWClient extends EventEmitter {
   private heartbeatIntervallId?: NodeJS.Timeout;
   private reconnectTimerId?: NodeJS.Timeout;
   private isConnecting = false;
+  private activeConnectPromise?: Promise<void>;
   private abortPendingConnect?: (reason: Error) => void;
   private readonly httpTimeout = 10000;
+  private readonly eventTasks = new Set<Promise<EventAckData>>();
+  private readonly inflightEvents = new Map<string, Promise<EventAckData>>();
+  private readonly eventResults = new Map<string, {
+    completedAt: number;
+    ackData: EventAckData;
+  }>();
+  private readonly eventAbortControllers = new Map<WebSocket, AbortController>();
+  private readonly callbackTasks = new Set<Promise<void>>();
+  private readonly callbackSocketContext = new AsyncLocalStorage<WebSocket>();
 
   private sslopts = { rejectUnauthorized: true };
-  readonly config: DWClientConfig;
+  readonly config: DWClientConfig & {
+    maxPendingEventHandlers: number;
+    maxPendingCallbackHandlers: number;
+  };
   private socket?: WebSocket;
   private dw_url?: string;
   private isAlive = false;
@@ -93,20 +114,34 @@ export class DWClient extends EventEmitter {
     keepAlive?: boolean;
     debug?: boolean;
     autoReconnect?: boolean;
+    maxPendingEventHandlers?: number;
+    maxPendingCallbackHandlers?: number;
     access_token?: string;
     subscriptions?: DWClientConfig['subscriptions'];
   }) {
-    super();
+    super({ captureRejections: true });
     const subscriptions = opts.subscriptions ?? defaultConfig.subscriptions;
     this.config = {
       ...defaultConfig,
       ...opts,
+      maxPendingEventHandlers:
+        opts.maxPendingEventHandlers ?? defaultConfig.maxPendingEventHandlers,
+      maxPendingCallbackHandlers:
+        opts.maxPendingCallbackHandlers ?? defaultConfig.maxPendingCallbackHandlers,
       subscriptions: subscriptions.map((subscription) => ({ ...subscription })),
     };
 
     if (!this.config.clientId || !this.config.clientSecret) {
       console.error('clientId or clientSecret is null');
       throw new Error('clientId or clientSecret is null');
+    }
+    if (!Number.isInteger(this.config.maxPendingEventHandlers)
+        || this.config.maxPendingEventHandlers <= 0) {
+      throw new Error('maxPendingEventHandlers must be a positive integer');
+    }
+    if (!Number.isInteger(this.config.maxPendingCallbackHandlers)
+        || this.config.maxPendingCallbackHandlers <= 0) {
+      throw new Error('maxPendingCallbackHandlers must be a positive integer');
     }
     if (this.config.debug !== undefined) {
       this.debug = this.config.debug;
@@ -136,7 +171,7 @@ export class DWClient extends EventEmitter {
 
   registerCallbackListener(
     eventId: string,
-    callback: (v: DWClientDownStream) => void
+    callback: (v: DWClientDownStream) => void | Promise<void>
   ) {
     if (!eventId || !callback) {
       console.error(
@@ -158,9 +193,76 @@ export class DWClient extends EventEmitter {
       });
     }
 
-    this.on(eventId, callback);
+    const inflightMessageIds = new Set<string>();
+    const wrappedCallback = (message: DWClientDownStream) => {
+      this.invokeCallback(eventId, callback, message, inflightMessageIds);
+    };
+    // EventEmitter treats a wrapper's `listener` property as the original
+    // listener (the same convention used by once()). Preserve that identity so
+    // existing `off(topic, callback)` / `removeListener(topic, callback)` calls
+    // continue to remove SDK-registered callbacks.
+    Object.defineProperty(wrappedCallback, 'listener', {
+      value: callback,
+    });
+    this.on(eventId, wrappedCallback);
 
     return this;
+  }
+
+  private invokeCallback(
+    eventId: string,
+    callback: (v: DWClientDownStream) => void | Promise<void>,
+    message: DWClientDownStream,
+    inflightMessageIds: Set<string>,
+  ) {
+    const messageId = message.headers.messageId;
+    if (messageId && inflightMessageIds.has(messageId)) {
+      this.printDebug(
+        `Callback message ${messageId} is already being processed; waiting for server retry`,
+      );
+      return;
+    }
+    if (this.callbackTasks.size >= this.config.maxPendingCallbackHandlers) {
+      this.printDebug(
+        `Callback handler capacity reached (${this.config.maxPendingCallbackHandlers}); `
+        + 'leaving the message unacknowledged for server retry',
+      );
+      return;
+    }
+
+    if (messageId) {
+      inflightMessageIds.add(messageId);
+    }
+    let result: void | Promise<void>;
+    try {
+      result = callback(message);
+    } catch (err) {
+      if (messageId) {
+        inflightMessageIds.delete(messageId);
+      }
+      console.warn(`Callback listener failed for topic ${eventId}`, err);
+      return;
+    }
+    if (!result) {
+      if (messageId) {
+        inflightMessageIds.delete(messageId);
+      }
+      return;
+    }
+
+    const task = Promise.resolve(result)
+      .catch((err) => console.warn(`Callback listener failed for topic ${eventId}`, err));
+    this.callbackTasks.add(task);
+    void task.finally(() => {
+      this.callbackTasks.delete(task);
+      if (messageId) {
+        inflightMessageIds.delete(messageId);
+      }
+    });
+  }
+
+  [EventEmitter.captureRejectionSymbol](err: unknown, eventName: string | symbol) {
+    console.warn(`Callback listener failed for topic ${String(eventName)}`, err);
   }
 
   async getAccessToken() {
@@ -218,6 +320,7 @@ export class DWClient extends EventEmitter {
   }
 
   private disposeSocket(socket: WebSocket) {
+    this.abortEventHandlers(socket);
     socket.removeAllListeners();
     // ws emits an asynchronous error when terminate() aborts an opening handshake.
     socket.on('error', () => undefined);
@@ -253,7 +356,7 @@ export class DWClient extends EventEmitter {
     this.printDebug('Reconnecting in ' + (delay / 1000).toFixed(1) + ' seconds... (attempt ' + (this.reconnectAttempts + 1) + ')');
     this.reconnectTimerId = setTimeout(() => {
       this.reconnectTimerId = undefined;
-      void this.connectInternal(true);
+      void this.runConnect(true);
     }, delay);
   }
 
@@ -264,6 +367,7 @@ export class DWClient extends EventEmitter {
       try {
         socket = new WebSocket(this.dw_url!, this.sslopts);
         this.socket = socket;
+        this.eventAbortControllers.set(socket, new AbortController());
       } catch (err) {
         this.printDebug('WebSocket constructor error');
         console.warn('ERROR', err);
@@ -332,6 +436,7 @@ export class DWClient extends EventEmitter {
 
       socket.on('close', () => {
         if (this.socket !== socket) return;
+        this.abortEventHandlers(socket);
         this.socket = undefined;
         this.printDebug('Socket closed');
         this.connected = false;
@@ -356,8 +461,27 @@ export class DWClient extends EventEmitter {
     });
   }
 
-  async connect() {
-    return this.connectInternal(false);
+  connect() {
+    this.userDisconnect = false;
+    if (this.reconnectTimerId) {
+      clearTimeout(this.reconnectTimerId);
+      this.reconnectTimerId = undefined;
+    }
+    return this.runConnect(false);
+  }
+
+  private runConnect(reconnectAttempt: boolean) {
+    if (this.activeConnectPromise) {
+      return this.activeConnectPromise;
+    }
+    const promise = this.connectInternal(reconnectAttempt);
+    this.activeConnectPromise = promise;
+    void promise.finally(() => {
+      if (this.activeConnectPromise === promise) {
+        this.activeConnectPromise = undefined;
+      }
+    });
+    return promise;
   }
 
   private async connectInternal(reconnectAttempt: boolean) {
@@ -367,13 +491,6 @@ export class DWClient extends EventEmitter {
     if (this.isConnecting) {
       this.printDebug('connect() already in progress, skipping');
       return;
-    }
-    if (!reconnectAttempt) {
-      this.userDisconnect = false;
-      if (this.reconnectTimerId) {
-        clearTimeout(this.reconnectTimerId);
-        this.reconnectTimerId = undefined;
-      }
     }
     this.isConnecting = true;
     try {
@@ -424,11 +541,11 @@ export class DWClient extends EventEmitter {
           this.onSystem(msg, socket);
           break;
         case 'EVENT':
-          void this.onEvent(msg, socket);
+          this.queueEvent(msg, socket);
           break;
         case 'CALLBACK':
           // 处理回调消息
-          this.onCallback(msg);
+          this.onCallback(msg, socket);
           break;
       }
     } catch (err) {
@@ -441,29 +558,150 @@ export class DWClient extends EventEmitter {
       onSent?.();
       return;
     }
-    socket.send(JSON.stringify(payload), (err) => {
-      if (err) {
-        console.warn('Failed to send websocket response', err);
-      }
+    try {
+      socket.send(JSON.stringify(payload), (err) => {
+        if (err) {
+          console.warn('Failed to send websocket response', err);
+        }
+        onSent?.();
+      });
+    } catch (err) {
+      console.warn('Failed to send websocket response', err);
       onSent?.();
+    }
+  }
+
+  private abortEventHandlers(socket: WebSocket) {
+    const controller = this.eventAbortControllers.get(socket);
+    this.eventAbortControllers.delete(socket);
+    controller?.abort();
+  }
+
+  private queueEvent(message: DWClientDownStream, socket = this.socket) {
+    if (!socket) {
+      return;
+    }
+    const messageId = message.headers.messageId;
+    const signal = this.eventAbortControllers.get(socket)?.signal;
+    if (messageId) {
+      const cached = this.getCachedEventResult(messageId);
+      if (cached) {
+        this.sendEventAck(message, cached, socket);
+        return;
+      }
+      const inflight = this.inflightEvents.get(messageId);
+      if (inflight) {
+        this.sendEventResultWhenReady(inflight, message, socket, signal);
+        return;
+      }
+    }
+    if (this.eventTasks.size >= this.config.maxPendingEventHandlers) {
+      this.printDebug(
+        `Event handler capacity reached (${this.config.maxPendingEventHandlers}), returning LATER`,
+      );
+      this.sendEventAck(message, { status: EventAck.LATER }, socket);
+      return;
+    }
+
+    const task = this.processEvent(message, signal);
+    this.eventTasks.add(task);
+    if (messageId) {
+      this.inflightEvents.set(messageId, task);
+    }
+    this.sendEventResultWhenReady(task, message, socket, signal);
+    void task.then((ackData) => {
+      if (messageId && ackData.status === EventAck.SUCCESS) {
+        this.cacheEventResult(messageId, ackData);
+      }
+    }).catch((err) => {
+      console.warn('Failed to cache event result', err);
+    }).finally(() => {
+      this.eventTasks.delete(task);
+      if (messageId && this.inflightEvents.get(messageId) === task) {
+        this.inflightEvents.delete(messageId);
+      }
+    });
+  }
+
+  private sendEventResultWhenReady(
+    task: Promise<EventAckData>,
+    message: DWClientDownStream,
+    socket: WebSocket,
+    signal?: AbortSignal,
+  ) {
+    void task
+      .then((ackData) => {
+        if (!signal?.aborted) {
+          this.sendEventAck(message, ackData, socket);
+        }
+      })
+      .catch((err) => console.warn('Failed to process event', err));
+  }
+
+  private getCachedEventResult(messageId: string) {
+    const cached = this.eventResults.get(messageId);
+    if (!cached) {
+      return undefined;
+    }
+    if (Date.now() - cached.completedAt > eventResultTtlMs) {
+      this.eventResults.delete(messageId);
+      return undefined;
+    }
+    this.eventResults.delete(messageId);
+    this.eventResults.set(messageId, cached);
+    return cached.ackData;
+  }
+
+  private cacheEventResult(messageId: string, ackData: EventAckData) {
+    this.eventResults.delete(messageId);
+    this.eventResults.set(messageId, {
+      completedAt: Date.now(),
+      ackData,
+    });
+    while (this.eventResults.size > maxCachedEventResults) {
+      const oldest = this.eventResults.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.eventResults.delete(oldest);
+    }
+  }
+
+  private sendEventAck(
+    message: DWClientDownStream,
+    ackData: EventAckData,
+    socket = this.socket,
+  ) {
+    this.sendFrame(socket, {
+      code: 200,
+      headers: {
+        contentType: 'application/json',
+        messageId: message.headers.messageId,
+      },
+      message: 'OK',
+      data: JSON.stringify(ackData)
     });
   }
 
   onSystem(downstream: DWClientDownStream, socket = this.socket) {
+    const ownsCurrentState = socket === undefined || socket === this.socket;
     switch (downstream.headers.topic) {
       case 'CONNECTED': {
         this.printDebug('CONNECTED');
         break;
       }
       case 'REGISTERED': {
-        // this.printDebug('REGISTERED');
-        this.registered = true;
-        this.reconnecting = false;
+        if (ownsCurrentState) {
+          this.registered = true;
+          this.reconnecting = false;
+        }
         break;
       }
       case 'disconnect': {
-        this.connected = false;
-        this.registered = false;
+        if (ownsCurrentState) {
+          this.connected = false;
+          this.registered = false;
+        }
         this.sendFrame(socket, {
           code: 200,
           headers: downstream.headers,
@@ -473,7 +711,9 @@ export class DWClient extends EventEmitter {
         break;
       }
       case 'KEEPALIVE': {
-        this.heartbeat();
+        if (ownsCurrentState) {
+          this.heartbeat();
+        }
         break;
       }
       case 'ping': {
@@ -489,28 +729,46 @@ export class DWClient extends EventEmitter {
     }
   }
 
-  async onEvent(message: DWClientDownStream, socket = this.socket) {
+  async onEvent(
+    message: DWClientDownStream,
+    socket = this.socket,
+    signal?: AbortSignal,
+  ) {
+    const ackData = await this.processEvent(message, signal);
+    if (!signal?.aborted) {
+      this.sendEventAck(message, ackData, socket);
+    }
+  }
+
+  private async processEvent(
+    message: DWClientDownStream,
+    signal?: AbortSignal,
+  ) {
     this.printDebug('received event, message=' + JSON.stringify(message));
     let ackData: EventAckData;
     try {
-      ackData = await this.onEventReceived(message);
+      ackData = await this.onEventReceived(message, signal);
+      if (!ackData
+          || (ackData.status !== EventAck.SUCCESS && ackData.status !== EventAck.LATER)) {
+        console.warn('Event listener returned an invalid acknowledgement');
+        ackData = { status: EventAck.LATER };
+      }
     } catch (err) {
       console.warn('Event listener failed', err);
       ackData = { status: EventAck.LATER };
     }
-    this.sendFrame(socket, {
-      code: 200,
-      headers: {
-        contentType: 'application/json',
-        messageId: message.headers.messageId,
-      },
-      message: 'OK',
-      data: JSON.stringify(ackData)
-    });
+    return ackData;
   }
 
-  onCallback(message: DWClientDownStream) {
-    this.emit(message.headers.topic, message);
+  onCallback(message: DWClientDownStream, socket = this.socket) {
+    if (socket) {
+      this.callbackSocketContext.run(
+        socket,
+        () => this.emit(message.headers.topic, message),
+      );
+    } else {
+      this.emit(message.headers.topic, message);
+    }
   }
 
   send(messageId: string, value: any) {
@@ -528,7 +786,7 @@ export class DWClient extends EventEmitter {
       message: 'OK',
       data: JSON.stringify(value),
     };
-    this.sendFrame(this.socket, msg);
+    this.sendFrame(this.callbackSocketContext.getStore() ?? this.socket, msg);
   }
 
   /**
@@ -562,6 +820,6 @@ export class DWClient extends EventEmitter {
       message: 'OK',
       data: JSON.stringify(value),
     };
-    this.sendFrame(this.socket, msg);
+    this.sendFrame(this.callbackSocketContext.getStore() ?? this.socket, msg);
   }
 }

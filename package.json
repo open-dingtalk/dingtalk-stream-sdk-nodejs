@@ -1,8 +1,8 @@
 {
   "name": "dingtalk-stream",
-  "version": "v2.1.6-beta.1",
+  "version": "v2.1.7-beta.1",
   "description": "Nodejs SDK for DingTalk Stream Mode API, Compared with the webhook mode, it is easier to access the DingTalk",
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "type": "module",
@@ -33,7 +33,7 @@
     "./*": "./*"
   },
   "scripts": {
-    "start": "ts-node-esm example/index.ts",
+    "start": "node --loader ts-node/esm example/index.ts",
     "build": "rimraf dist && rollup -c",
     "dev": "rollup -c --watch --watch.include 'src/**' -m inline",
     "prepublishOnly": "npm run build",

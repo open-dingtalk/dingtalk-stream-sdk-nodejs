@@ -63,9 +63,9 @@
   ],
   "homepage": "https://github.com/open-dingtalk/dingtalk-stream-sdk-nodejs#readme",
   "dependencies": {
-    "axios": "^1.4.0",
+    "axios": "^1.19.0",
     "debug": "^4.3.4",
-    "ws": "^8.13.0"
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@rollup/plugin-alias": "^5.0.0",
